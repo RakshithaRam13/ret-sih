@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+// TEMP: pointing to local Flask backend for testing.
+// Switch back to your deployed Vercel URL once this is confirmed working:
+// const API_BASE = "https://ret-sih-v4vr.vercel.app";
+const API_BASE = "http://127.0.0.1:5000";
+
 function NewScreening() {
 
   const navigate = useNavigate();
@@ -18,6 +23,12 @@ function NewScreening() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  // NEW: tracks the saved record's id and whether it's been verified yet
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [savedPatientId, setSavedPatientId] = useState(null);
+  const [isVerified, setIsVerified] = useState(false);
 
 
   const handleChange = (e) => {
@@ -85,82 +96,9 @@ function NewScreening() {
   };
 
 
-  const sendToSpecialist = async () => {
-  if (!patient.name || !patient.age || !result) {
-    alert("Please complete the patient screening first.");
-    return;
-  }
-
-  try {
-    // First save the patient record
-    const patientResponse = await fetch(
-      "http://127.0.0.1:5000/api/records",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name: patient.name,
-          patientId:
-            patient.patientId ||
-            `RT-${Math.floor(1000 + Math.random() * 9000)}`,
-          age: Number(patient.age),
-          gender: patient.gender,
-          eye: patient.eye,
-          result: result.result,
-          confidence: result.confidence
-        })
-      }
-    );
-
-    const patientData = await patientResponse.json();
-
-    if (!patientResponse.ok) {
-      throw new Error(patientData.error || "Failed to save patient");
-    }
-
-    // Then create the referral
-    const referralResponse = await fetch(
-      "http://127.0.0.1:5000/api/referrals",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          recordId: patientData.id,
-          patientName: patient.name,
-          patientId: patientData.patientId,
-          age: Number(patient.age),
-          gender: patient.gender,
-          eye: patient.eye,
-          result: result.result,
-          confidence: result.confidence
-        })
-      }
-    );
-
-    const referralData = await referralResponse.json();
-
-    if (!referralResponse.ok) {
-      throw new Error(
-        referralData.error || "Failed to create referral"
-      );
-    }
-
-    alert("Patient successfully sent to specialist!");
-
-    navigate("/referrals");
-
-  } catch (error) {
-    console.error(error);
-    alert(error.message);
-  }
-};
-
   // --------------------------------
-  // SAVE PATIENT TO MYSQL
+  // STEP 1: DOCTOR VERIFICATION
+  // Saves the record to MySQL exactly once, marks it verified locally.
   // --------------------------------
 
   const savePatient = async () => {
@@ -170,72 +108,60 @@ function NewScreening() {
       return;
     }
 
+    // Already saved and verified — don't save again
+    if (isVerified) {
+      return;
+    }
+
     setSaving(true);
 
+    const generatedPatientId =
+      patient.patientId ||
+      `RT-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const patientData = {
-
       name: patient.name,
-
-      patientId:
-        patient.patientId ||
-        `RT-${Math.floor(
-          1000 + Math.random() * 9000
-        )}`,
-
+      patientId: generatedPatientId,
       age: Number(patient.age),
-
       gender: patient.gender,
-
       eye: patient.eye,
-
       result: result.result,
-
       confidence: result.confidence
-
     };
-
 
     try {
 
       const response = await fetch(
-        "http://127.0.0.1:5000/api/records",
+        `${API_BASE}/api/records`,
         {
           method: "POST",
-
           headers: {
             "Content-Type": "application/json"
           },
-
           body: JSON.stringify(patientData)
         }
       );
 
-
       const data = await response.json();
 
-
       if (!response.ok) {
-
-        throw new Error(
-          data.error || "Failed to save patient"
-        );
-
+        throw new Error(data.error || "Failed to save patient");
       }
 
+      // Remember the saved record's id/patientId so sendToSpecialist
+      // can reuse it instead of creating a duplicate record.
+      setSavedRecordId(data.id);
+      setSavedPatientId(data.patientId);
+      setIsVerified(true);
 
-      alert(
-        "Screening saved successfully!"
-      );
-
-      navigate("/patients");
-
+      alert("Screening verified and saved successfully!");
 
     } catch (error) {
 
-      console.error(error);
+      console.error("SAVE SCREENING ERROR:", error);
 
       alert(
-        "Unable to save screening. Make sure Flask is running."
+        `Unable to save screening: ${error.message}`
       );
 
     } finally {
@@ -244,6 +170,69 @@ function NewScreening() {
 
     }
 
+  };
+
+
+  // --------------------------------
+  // STEP 2: SEND TO SPECIALIST
+  // Only allowed after verification. Reuses the already-saved record
+  // instead of inserting a second copy into `records`.
+  // --------------------------------
+
+  const sendToSpecialist = async () => {
+
+    if (!isVerified || !savedRecordId) {
+      alert("Please complete Doctor Verification first.");
+      return;
+    }
+
+    setSending(true);
+
+    try {
+
+      const referralResponse = await fetch(
+        `${API_BASE}/api/referrals`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            recordId: savedRecordId,
+            patientName: patient.name,
+            patientId: savedPatientId,
+            age: Number(patient.age),
+            gender: patient.gender,
+            eye: patient.eye,
+            result: result.result,
+            confidence: result.confidence
+          })
+        }
+      );
+
+      const referralData = await referralResponse.json();
+
+      if (!referralResponse.ok) {
+        throw new Error(
+          referralData.error || "Failed to create referral"
+        );
+      }
+
+      alert("Patient successfully sent to specialist!");
+
+      navigate("/referrals");
+
+    } catch (error) {
+
+      console.error("SEND TO SPECIALIST ERROR:", error);
+
+      alert(error.message);
+
+    } finally {
+
+      setSending(false);
+
+    }
   };
 
 
@@ -654,21 +643,28 @@ function NewScreening() {
             <button
               className="verify-button"
               onClick={savePatient}
-              disabled={saving}
+              disabled={saving || isVerified}
             >
               {saving
                 ? "Saving..."
+                : isVerified
+                ? "✓ Verified"
                 : "✓ Doctor Verification"}
             </button>
 
 
-          <button
-          className="specialist-button"
-          onClick={sendToSpecialist}
-          disabled={saving}
-          >
-        Send to Specialist →
-        </button>
+            <button
+              className="specialist-button"
+              onClick={sendToSpecialist}
+              disabled={!isVerified || sending}
+              title={
+                !isVerified
+                  ? "Complete Doctor Verification first"
+                  : ""
+              }
+            >
+              {sending ? "Sending..." : "Send to Specialist →"}
+            </button>
 
 
             <button

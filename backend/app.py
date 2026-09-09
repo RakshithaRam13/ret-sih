@@ -354,7 +354,52 @@ def add_referral():
         cursor.close()
         connection.close()
 
+# --------------------------------
+# UPDATE REFERRAL STATUS (Verify / Send to Specialist)
+# --------------------------------
 
+@app.route("/api/referrals/<int:id>", methods=["PATCH"])
+def update_referral_status(id):
+    data = request.json
+    new_status = data.get("referral_status")
+
+    allowed_statuses = ["Pending", "Verified", "Referred"]
+
+    if new_status not in allowed_statuses:
+        return jsonify({
+            "error": f"Invalid status. Must be one of {allowed_statuses}"
+        }), 400
+
+    connection = get_db_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute(
+            "UPDATE referrals SET referral_status = %s WHERE id = %s",
+            (new_status, id)
+        )
+        connection.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({
+                "error": "Referral not found"
+            }), 404
+
+        return jsonify({
+            "message": "Referral status updated successfully",
+            "id": id,
+            "referral_status": new_status
+        })
+
+    except mysql.connector.Error as error:
+        connection.rollback()
+        return jsonify({
+            "error": str(error)
+        }), 500
+
+    finally:
+        cursor.close()
+        connection.close()
 
 # --------------------------------
 # RUN SERVER
@@ -365,3 +410,7 @@ if __name__ == "__main__":
         debug=True,
         port=5000
     )
+
+@app.route("/api/test", methods=["GET", "OPTIONS"])
+def test():
+    return jsonify({"message": "Backend is working"})

@@ -17,7 +17,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("http://127.0.0.1:5000/api/records")
+    fetch("https://ret-sih.vercel.app/api/records")
       .then((response) => {
         if (!response.ok) {
           throw new Error("Failed to fetch records");
